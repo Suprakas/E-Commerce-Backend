@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import type { InvalidateCacheProps } from "../types/types.js";
+import type { InvalidateCacheProps, OrderItemType } from "../types/types.js";
 import { Product } from "../models/product.js";
 import { myCache } from "../app.js";
 
@@ -9,6 +9,7 @@ export const connectDB = () => {
     }).then((c) => console.log(`DB connected to ${c.connection.host}`))
     .catch((e) => console.log(e));
 };
+
 
 export const invalidateCache = async ({
   product,
@@ -33,12 +34,33 @@ export const invalidateCache = async ({
         productKeys.push(`product-${i._id}`);
         });
 
+         if (typeof productId === "string") productKeys.push(`product-${productId}`);
+
+         if (typeof productId === "object")
+            productId.forEach((i) => productKeys.push(`product-${i}`));
+
         myCache.del(productKeys);
-    }
-    if(order){
+      }
+    if (order) {
+        const ordersKeys: string[] = [
+          "all-orders",
+          `my-orders-${userId}`,
+          `order-${orderId}`,
+          ];  
+          myCache.del(ordersKeys);
+       }
+    if (admin) {
+     
+      }
+  };
 
-    }
-    if(admin){
-
-    }
-};
+export const reduceStock = async (orderItems: OrderItemType[]) => {
+  for (let i = 0; i < orderItems.length; i++) {
+    const order = orderItems[i];
+    if (!order) continue;
+    const product = await Product.findById(order.productId);
+    if (!product) throw new Error("Product Not Found");
+    product.stock -= order.quantity;
+    await product.save();
+      }
+    };
