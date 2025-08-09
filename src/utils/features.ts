@@ -1,7 +1,8 @@
-import mongoose from "mongoose";
+import mongoose, { Document } from "mongoose";
 import type { InvalidateCacheProps, OrderItemType } from "../types/types.js";
 import { Product } from "../models/product.js";
 import { myCache } from "../app.js";
+
 
 export const connectDB = () => {
   mongoose
@@ -53,6 +54,12 @@ export const invalidateCache = async ({
     myCache.del(ordersKeys);
   }
   if (admin) {
+    myCache.del([
+      "admin-stats",
+      "admin-pie-charts",
+      "admin-bar-charts",
+      "admin-line-charts",
+    ]);
   }
 };
 
@@ -71,4 +78,69 @@ export const calculatePercentage = (thisMonth: number, lastMonth: number) => {
   if (lastMonth === 0) return thisMonth * 100;
   const percent = (thisMonth / lastMonth) * 100;
   return Number(percent.toFixed(0));
+};
+
+export const getInventories = async ({
+  categories,
+  productsCount,
+}: {
+  categories: string[];
+  productsCount: number;
+}) => {
+  const categoriesCountPromise = categories.map((category) =>
+    Product.countDocuments({ category })
+  );
+
+  const categoriesCount = await Promise.all(categoriesCountPromise);
+
+  const categoryCount: Record<string, number>[] = [];
+
+  categories.forEach((category, i) => {
+    categoryCount.push({
+      [category]: Math.round((categoriesCount[i] ?? 0 / productsCount) * 100),
+    });
+  });
+
+  return categoryCount;
+};
+
+interface MyDocument extends Document {
+  createdAt: Date;
+  discount?: number;
+  total?: number;
+}
+type FuncProps = {
+  length: number;
+  docArr: MyDocument[];
+  today: Date;
+  property?: "discount" | "total";
+};
+
+export const getChartData = ({
+  length,
+  docArr,
+  today,
+  property,
+}: FuncProps): number[] => {
+  const data = new Array(length).fill(0);
+
+  docArr.forEach((doc) => {
+    const created = doc.createdAt;
+
+    const monthDiff =
+      (today.getFullYear() - created.getFullYear()) * 12 +
+      (today.getMonth() - created.getMonth());
+
+    if (monthDiff >= 0 && monthDiff < length) {
+      const index = length - monthDiff - 1;
+
+      if (property && typeof doc[property] === "number") {
+        data[index] += doc[property] as number;
+      } else {
+        data[index] += 1;
+      }
+    }
+  });
+
+  return data;
 };
