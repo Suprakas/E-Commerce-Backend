@@ -1,23 +1,26 @@
 import express from "express";
 import 
 { 
-    newProduct,
-    getlatestProducts, 
-    getAllCategories,
-    getAdminProducts,
-    getSingleProduct,
-    updateProduct,
-    deleteProduct,
-    getAllProducts,
+  allReviewsOfProduct,
+  deleteProduct,
+  deleteReview,
+  getAdminProducts,
+  getAllCategories,
+  getAllProducts,
+  getSingleProduct,
+  getlatestProducts,
+  newProduct,
+  newReview,
+  updateProduct,
 } from  "../controllers/product.js";
 
 import { adminOnly } from "../middlewares/auth.js";
-import { singleUpload } from "../middlewares/multer.js";
+import { mutliUpload } from "../middlewares/multer.js";
 
 const app = express.Router();
 
 //To Create New Product  - /api/v1/product/new
-app.post("/new", adminOnly, singleUpload, newProduct);
+app.post("/new", adminOnly, mutliUpload, newProduct);
 
 //To get all Products with filters  - /api/v1/product/all
 app.get("/all", getAllProducts);
@@ -29,9 +32,17 @@ app.get("/latest", getlatestProducts);
 app.get("/categories", getAllCategories);
 
 //To get all Products   - /api/v1/product/admin-products
-app.get("/admin-products", getAdminProducts);
+app.get("/admin-products", adminOnly, getAdminProducts);
 
 // To get, update, delete Product
-app.route("/:id").get(getSingleProduct).put(singleUpload, updateProduct).delete(adminOnly, deleteProduct);
+app
+  .route("/:id")
+  .get(getSingleProduct)
+  .put(adminOnly, mutliUpload, updateProduct)
+  .delete(adminOnly, deleteProduct);
+
+app.get("/reviews/:id", allReviewsOfProduct);
+app.post("/review/new/:id", newReview);
+app.delete("/review/:id", deleteReview);
   
 export default app;

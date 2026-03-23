@@ -1,18 +1,78 @@
+import { type UploadApiResponse, v2 as cloudinary } from "cloudinary";
+import { Redis } from "ioredis";
 import mongoose, { Document } from "mongoose";
-import type { InvalidateCacheProps, OrderItemType } from "../types/types.js";
+import { redis } from "../app.js";
 import { Product } from "../models/product.js";
-import { myCache } from "../app.js";
+import { Review } from "../models/review.js";
+import type { InvalidateCacheProps, OrderItemType } from "../types/types.js";
 
+export const findAverageRatings = async (
+  productId: mongoose.Types.ObjectId
+) => {
+  let totalRating = 0;
 
-export const connectDB = () => {
+  const reviews = await Review.find({ product: productId });
+  reviews.forEach((review) => {
+    totalRating += review.rating;
+  });
+
+  const averateRating = Math.floor(totalRating / reviews.length) || 0;
+
+  return {
+    numOfReviews: reviews.length,
+    ratings: averateRating,
+  };
+};
+
+const getBase64 = (file: Express.Multer.File) =>
+  `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+
+export const uploadToCloudinary = async (files: Express.Multer.File[]) => {
+  const promises = files.map(async (file) => {
+    return new Promise<UploadApiResponse>((resolve, reject) => {
+      cloudinary.uploader.upload(getBase64(file), (error: Error | null, result: UploadApiResponse) => {
+        if (error) return reject(error);
+        resolve(result!);
+      });
+    });
+  });
+
+  const result = await Promise.all(promises);
+
+  return result.map((i: UploadApiResponse) => ({
+    public_id: i.public_id,
+    url: i.secure_url,
+  }));
+};
+
+export const deleteFromCloudinary = async (publicIds: string[]) => {
+  const promises = publicIds.map((id) => {
+    return new Promise<void>((resolve, reject) => {
+      cloudinary.uploader.destroy(id, (error: Error | null, result: any) => {
+        if (error) return reject(error);
+        resolve();
+      });
+    });
+  });
+
+  await Promise.all(promises);
+};
+
+export const connectRedis = (redisURI: string) => {
+  const redis = new Redis(redisURI);
+
+  redis.on("connect", () => console.log("Redis Connected"));
+  redis.on("error", (e: Error) => console.log(e));
+
+  return redis;
+};
+
+export const connectDB = (uri: string) => {
   mongoose
-    .connect(
-      "mongodb+srv://SuprakashBallav1:Suprakash995@cluster0.epqw1.mongodb.net/E-Commerce-DB",
-      {
-        dbName: "E-Commerce-DB",
-      }
-    )
-    .then((c) => console.log(`DB connected to ${c.connection.host}`))
+    .connect(uri, {
+      dbName: "Ecommerce_24",
+    })
+    .then((c) => console.log(`DB Connected to ${c.connection.host}`))
     .catch((e) => console.log(e));
 };
 
@@ -25,6 +85,10 @@ export const invalidateCache = async ({
   orderId,
   productId,
 }: InvalidateCacheProps) => {
+  if (review) {
+    await redis.del([`reviews-${productId}`]);
+  }
+
   if (product) {
     const productKeys: string[] = [
       "latest-products",
@@ -32,18 +96,12 @@ export const invalidateCache = async ({
       "all-products",
     ];
 
-    const products = await Product.find({}).select("_id");
-
-    products.forEach((i) => {
-      productKeys.push(`product-${i._id}`);
-    });
-
     if (typeof productId === "string") productKeys.push(`product-${productId}`);
 
     if (typeof productId === "object")
       productId.forEach((i) => productKeys.push(`product-${i}`));
 
-    myCache.del(productKeys);
+    await redis.del(productKeys);
   }
   if (order) {
     const ordersKeys: string[] = [
@@ -51,10 +109,11 @@ export const invalidateCache = async ({
       `my-orders-${userId}`,
       `order-${orderId}`,
     ];
-    myCache.del(ordersKeys);
+
+    await redis.del(ordersKeys);
   }
   if (admin) {
-    myCache.del([
+    await redis.del([
       "admin-stats",
       "admin-pie-charts",
       "admin-bar-charts",
@@ -66,7 +125,7 @@ export const invalidateCache = async ({
 export const reduceStock = async (orderItems: OrderItemType[]) => {
   for (let i = 0; i < orderItems.length; i++) {
     const order = orderItems[i];
-    if (!order) continue;
+    if (!order) throw new Error("Order item not found");
     const product = await Product.findById(order.productId);
     if (!product) throw new Error("Product Not Found");
     product.stock -= order.quantity;
@@ -97,7 +156,7 @@ export const getInventories = async ({
 
   categories.forEach((category, i) => {
     categoryCount.push({
-      [category]: Math.round((categoriesCount[i] ?? 0 / productsCount) * 100),
+      [category]: Math.round(((categoriesCount[i] ?? 0) / productsCount) * 100),
     });
   });
 
@@ -121,23 +180,18 @@ export const getChartData = ({
   docArr,
   today,
   property,
-}: FuncProps): number[] => {
-  const data = new Array(length).fill(0);
+}: FuncProps) => {
+  const data: number[] = new Array(length).fill(0);
 
-  docArr.forEach((doc) => {
-    const created = doc.createdAt;
+  docArr.forEach((i) => {
+    const creationDate = i.createdAt;
+    const monthDiff = (today.getMonth() - creationDate.getMonth() + 12) % 12;
 
-    const monthDiff =
-      (today.getFullYear() - created.getFullYear()) * 12 +
-      (today.getMonth() - created.getMonth());
-
-    if (monthDiff >= 0 && monthDiff < length) {
-      const index = length - monthDiff - 1;
-
-      if (property && typeof doc[property] === "number") {
-        data[index] += doc[property] as number;
+    if (monthDiff < length) {
+      if (property) {
+        data[length - monthDiff - 1] = (data[length - monthDiff - 1] ?? 0) + ((i[property] ?? 0) as number);
       } else {
-        data[index] += 1;
+        data[length - monthDiff - 1] = (data[length - monthDiff - 1] ?? 0) + 1;
       }
     }
   });
